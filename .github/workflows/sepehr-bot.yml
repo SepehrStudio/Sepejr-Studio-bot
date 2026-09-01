@@ -15,15 +15,26 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: 🔍 Check files
+        run: |
+          echo "Python:"
+          python --version
+          echo "Bot file:"
+          ls -l bot.py
+          echo "Requirements:"
+          cat requirements.txt
+
       - name: 🤖 Run Sepehr Studio Bot
         env:
           RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
           PYTHONUNBUFFERED: "1"
         run: |
+          echo "🚀 Starting Sepehr Studio Bot..."
           python -u bot.py
