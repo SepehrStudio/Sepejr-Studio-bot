@@ -5,7 +5,7 @@ import uuid
 import requests
 
 TOKEN = os.getenv("RUBIKA_BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ADMIN_CHAT_ID = os.getenv("b0IGuhX0BBcQ085f392a2b3fce01be44")
 
 if not TOKEN:
     raise RuntimeError("RUBIKA_BOT_TOKEN is not configured.")
