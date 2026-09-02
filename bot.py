@@ -11,8 +11,11 @@ API = f"https://botapi.rubika.ir/v3/{TOKEN}"
 
 session = requests.Session()
 
-# وضعیت ثبت سفارش کاربران
+# وضعیت سفارش کاربران
 users = {}
+
+# جلوگیری از پردازش دوباره یک پیام
+processed_messages = set()
 
 
 # =========================
@@ -32,7 +35,11 @@ def call_api(method, payload=None):
             flush=True
         )
 
-        result = response.json()
+        try:
+            result = response.json()
+        except Exception:
+            print("[API ERROR] Invalid JSON response", flush=True)
+            return {}
 
         if result.get("status") != "OK":
             print(
@@ -51,74 +58,57 @@ def call_api(method, payload=None):
 
 
 # =========================
-# KEYBOARD
+# INLINE KEYBOARD
 # =========================
 
 def button(button_id, text):
     return {
-        "id": button_id,
+        "id": str(button_id),
         "type": "Simple",
-        "button_text": text
+        "button_text": str(text)
+    }
+
+
+def make_keyboard(rows):
+    return {
+        "rows": [
+            {
+                "buttons": row
+            }
+            for row in rows
+        ]
     }
 
 
 def main_keyboard():
-    return {
-        "rows": [
-            {
-                "buttons": [
-                    button(
-                        "services",
-                        "💻 خدمات Sepehr Studio"
-                    )
-                ]
-            },
-            {
-                "buttons": [
-                    button(
-                        "order",
-                        "📋 ثبت سفارش"
-                    ),
-                    button(
-                        "contact",
-                        "👨‍💻 ارتباط با ما"
-                    )
-                ]
-            },
-            {
-                "buttons": [
-                    button(
-                        "about",
-                        "ℹ️ درباره ما"
-                    )
-                ]
-            }
+    return make_keyboard([
+        [
+            button("services", "💻 خدمات Sepehr Studio")
+        ],
+        [
+            button("order", "📋 ثبت سفارش"),
+            button("contact", "👨‍💻 ارتباط با ما")
+        ],
+        [
+            button("about", "ℹ️ درباره ما")
         ]
-    }
+    ])
 
 
 def services_keyboard():
-    return {
-        "rows": [
-            {
-                "buttons": [
-                    button("website", "🌐 طراحی سایت"),
-                    button("app", "📱 ساخت اپ")
-                ]
-            },
-            {
-                "buttons": [
-                    button("ai", "🤖 هوش مصنوعی"),
-                    button("coding", "💻 برنامه‌نویسی")
-                ]
-            },
-            {
-                "buttons": [
-                    button("back", "🔙 بازگشت")
-                ]
-            }
+    return make_keyboard([
+        [
+            button("website", "🌐 طراحی سایت"),
+            button("app", "📱 ساخت اپ")
+        ],
+        [
+            button("ai", "🤖 هوش مصنوعی"),
+            button("coding", "💻 برنامه‌نویسی")
+        ],
+        [
+            button("back", "🔙 بازگشت")
         ]
-    }
+    ])
 
 
 # =========================
@@ -132,7 +122,7 @@ def send_message(chat_id, text, keypad=None):
         "text": str(text)
     }
 
-    if keypad:
+    if keypad is not None:
         payload["inline_keypad"] = keypad
 
     return call_api(
@@ -147,7 +137,9 @@ def send_message(chat_id, text, keypad=None):
 
 def start_order(chat_id):
 
-    users[str(chat_id)] = {
+    uid = str(chat_id)
+
+    users[uid] = {
         "step": "name",
         "order": {}
     }
@@ -168,6 +160,8 @@ def process_order(chat_id, text):
     if uid not in users:
         return False
 
+    text = text.strip()
+
     if text == "لغو":
 
         del users[uid]
@@ -182,7 +176,7 @@ def process_order(chat_id, text):
 
     state = users[uid]
 
-    # نام
+    # مرحله ۱
     if state["step"] == "name":
 
         state["order"]["name"] = text
@@ -202,7 +196,7 @@ def process_order(chat_id, text):
 
         return True
 
-    # نوع پروژه
+    # مرحله ۲
     if state["step"] == "type":
 
         state["order"]["type"] = text
@@ -217,7 +211,7 @@ def process_order(chat_id, text):
 
         return True
 
-    # توضیحات
+    # مرحله ۳
     if state["step"] == "description":
 
         state["order"]["description"] = text
@@ -232,7 +226,7 @@ def process_order(chat_id, text):
 
         return True
 
-    # بودجه
+    # مرحله ۴
     if state["step"] == "budget":
 
         state["order"]["budget"] = text
@@ -276,30 +270,174 @@ def process_update(update):
     if not isinstance(message, dict):
         return
 
-    text = message.get("text") or ""
-    text = text.strip()
+    message_id = message.get("message_id")
 
-    aux_data = message.get("aux_data") or {}
+    # جلوگیری از پردازش دوباره
+    if message_id:
 
+        message_id = str(message_id)
+
+        if message_id in processed_messages:
+            print(
+                f"[SKIP] Duplicate message: {message_id}",
+                flush=True
+            )
+            return
+
+        processed_messages.add(message_id)
+
+        # جلوگیری از رشد بی‌نهایت حافظه
+        if len(processed_messages) > 1000:
+            processed_messages.clear()
+            processed_messages.add(message_id)
+
+    text = str(message.get("text") or "").strip()
+
+    aux_data = message.get("aux_data")
+
+    if not isinstance(aux_data, dict):
+        aux_data = {}
+
+    # مهم:
+    # کلیک دکمه‌های Inline از اینجا می‌آید
     button_id = aux_data.get("button_id")
 
-    command = button_id or text
+    if button_id:
+        button_id = str(button_id)
 
     print(
-        f"[MESSAGE] chat={chat_id} "
+        f"[MESSAGE] "
+        f"chat={chat_id} "
         f"text={text!r} "
         f"button={button_id!r}",
         flush=True
     )
 
-    # در حال ثبت سفارش
+    # ==================================
+    # اول دکمه را بررسی می‌کنیم
+    # ==================================
+
+    if button_id:
+
+        print(
+            f"[BUTTON] clicked: {button_id}",
+            flush=True
+        )
+
+        if button_id == "services":
+
+            send_message(
+                chat_id,
+                "💻 خدمات Sepehr Studio:",
+                services_keyboard()
+            )
+
+            return
+
+        if button_id == "order":
+
+            start_order(chat_id)
+
+            return
+
+        if button_id == "contact":
+
+            send_message(
+                chat_id,
+                "👨‍💻 ارتباط با Sepehr Studio\n\n"
+                "پیام خود را ارسال کنید.",
+                main_keyboard()
+            )
+
+            return
+
+        if button_id == "about":
+
+            send_message(
+                chat_id,
+                "🚀 Sepehr Studio\n\n"
+                "توسعه پروژه‌های برنامه‌نویسی، "
+                "طراحی سایت و هوش مصنوعی.",
+                main_keyboard()
+            )
+
+            return
+
+        if button_id == "website":
+
+            send_message(
+                chat_id,
+                "🌐 طراحی سایت\n\n"
+                "طراحی سایت‌های مدرن و واکنش‌گرا.",
+                services_keyboard()
+            )
+
+            return
+
+        if button_id == "app":
+
+            send_message(
+                chat_id,
+                "📱 ساخت اپلیکیشن\n\n"
+                "ساخت اپلیکیشن و رابط کاربری.",
+                services_keyboard()
+            )
+
+            return
+
+        if button_id == "ai":
+
+            send_message(
+                chat_id,
+                "🤖 پروژه‌های هوش مصنوعی\n\n"
+                "طراحی پروژه‌های مبتنی بر هوش مصنوعی.",
+                services_keyboard()
+            )
+
+            return
+
+        if button_id == "coding":
+
+            send_message(
+                chat_id,
+                "💻 برنامه‌نویسی\n\n"
+                "توسعه پروژه‌های وب و نرم‌افزاری.",
+                services_keyboard()
+            )
+
+            return
+
+        if button_id == "back":
+
+            send_message(
+                chat_id,
+                "🏠 منوی اصلی:",
+                main_keyboard()
+            )
+
+            return
+
+        print(
+            f"[BUTTON] Unknown button: {button_id}",
+            flush=True
+        )
+
+        return
+
+    # ==================================
+    # پیام معمولی / سفارش
+    # ==================================
+
     if str(chat_id) in users:
 
         if process_order(chat_id, text):
             return
 
-    # شروع
-    if command in (
+    # ==================================
+    # دستورات
+    # ==================================
+
+    if text in (
         "/start",
         "start",
         "شروع"
@@ -312,87 +450,17 @@ def process_update(update):
             main_keyboard()
         )
 
-    elif command == "services":
+        return
 
-        send_message(
-            chat_id,
-            "💻 خدمات Sepehr Studio:",
-            services_keyboard()
-        )
-
-    elif command == "order":
-
-        start_order(chat_id)
-
-    elif command == "website":
-
-        send_message(
-            chat_id,
-            "🌐 طراحی سایت\n\n"
-            "طراحی سایت‌های مدرن و واکنش‌گرا.",
-            main_keyboard()
-        )
-
-    elif command == "app":
-
-        send_message(
-            chat_id,
-            "📱 ساخت اپلیکیشن\n\n"
-            "ساخت اپلیکیشن و رابط کاربری.",
-            main_keyboard()
-        )
-
-    elif command == "ai":
-
-        send_message(
-            chat_id,
-            "🤖 پروژه‌های هوش مصنوعی\n\n"
-            "طراحی پروژه‌های مبتنی بر هوش مصنوعی.",
-            main_keyboard()
-        )
-
-    elif command == "coding":
-
-        send_message(
-            chat_id,
-            "💻 برنامه‌نویسی\n\n"
-            "توسعه پروژه‌های وب و نرم‌افزاری.",
-            main_keyboard()
-        )
-
-    elif command == "contact":
-
-        send_message(
-            chat_id,
-            "👨‍💻 ارتباط با Sepehr Studio\n\n"
-            "پیام خود را ارسال کنید.",
-            main_keyboard()
-        )
-
-    elif command == "about":
-
-        send_message(
-            chat_id,
-            "🚀 Sepehr Studio\n\n"
-            "توسعه پروژه‌های برنامه‌نویسی، طراحی سایت و هوش مصنوعی.",
-            main_keyboard()
-        )
-
-    elif command == "back":
-
-        send_message(
-            chat_id,
-            "🏠 منوی اصلی:",
-            main_keyboard()
-        )
-
-    elif command == "/test":
+    if text == "/test":
 
         send_message(
             chat_id,
             "✅ بات Sepehr Studio فعال است!",
             main_keyboard()
         )
+
+        return
 
 
 # =========================
@@ -424,18 +492,15 @@ def run():
                 payload
             )
 
-            data = result.get(
-                "data",
-                {}
-            )
+            data = result.get("data", {})
 
             if not isinstance(data, dict):
                 data = {}
 
-            updates = data.get(
-                "updates",
-                []
-            )
+            updates = data.get("updates", [])
+
+            if not isinstance(updates, list):
+                updates = []
 
             print(
                 f"[UPDATES] {len(updates)} update(s)",
@@ -443,13 +508,23 @@ def run():
             )
 
             for update in updates:
-                process_update(update)
+
+                try:
+                    process_update(update)
+
+                except Exception as error:
+
+                    print(
+                        f"[UPDATE ERROR] {error}",
+                        flush=True
+                    )
 
             next_offset_id = data.get(
                 "next_offset_id"
             )
 
             if next_offset_id:
+
                 offset_id = str(
                     next_offset_id
                 )
@@ -463,6 +538,10 @@ def run():
 
         time.sleep(2)
 
+
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
     run()
