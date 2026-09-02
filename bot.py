@@ -1,27 +1,18 @@
 import os
 import time
-import json
-import uuid
 import requests
 
 TOKEN = os.getenv("RUBIKA_BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("b0IGuhX0BBcQ085f392a2b3fce01be44")
 
 if not TOKEN:
     raise RuntimeError("RUBIKA_BOT_TOKEN is not configured.")
-
-if not ADMIN_CHAT_ID:
-    raise RuntimeError("ADMIN_CHAT_ID is not configured.")
 
 API = f"https://botapi.rubika.ir/v3/{TOKEN}"
 
 session = requests.Session()
 
-# وضعیت موقت کاربران
+# وضعیت ثبت سفارش کاربران
 users = {}
-
-# سفارش‌ها
-orders = {}
 
 
 # =========================
@@ -60,7 +51,7 @@ def call_api(method, payload=None):
 
 
 # =========================
-# KEYBOARDS
+# KEYBOARD
 # =========================
 
 def button(button_id, text):
@@ -130,37 +121,6 @@ def services_keyboard():
     }
 
 
-def admin_keyboard(order_id):
-    return {
-        "rows": [
-            {
-                "buttons": [
-                    button(
-                        f"accept_{order_id}",
-                        "✅ تأیید سفارش"
-                    ),
-                    button(
-                        f"reject_{order_id}",
-                        "❌ رد سفارش"
-                    )
-                ]
-            },
-            {
-                "buttons": [
-                    button(
-                        f"working_{order_id}",
-                        "🔨 در حال انجام"
-                    ),
-                    button(
-                        f"done_{order_id}",
-                        "🎉 تکمیل شد"
-                    )
-                ]
-            }
-        ]
-    }
-
-
 # =========================
 # SEND MESSAGE
 # =========================
@@ -182,12 +142,8 @@ def send_message(chat_id, text, keypad=None):
 
 
 # =========================
-# ORDER SYSTEM
+# ORDER
 # =========================
-
-def new_order_id():
-    return "SS-" + uuid.uuid4().hex[:8].upper()
-
 
 def start_order(chat_id):
 
@@ -200,7 +156,8 @@ def start_order(chat_id):
         chat_id,
         "📋 ثبت سفارش جدید\n\n"
         "مرحله ۱ از ۴\n\n"
-        "👤 لطفاً نام خود را ارسال کنید."
+        "👤 نام خود را ارسال کنید.\n\n"
+        "برای لغو بنویسید: لغو"
     )
 
 
@@ -211,9 +168,22 @@ def process_order(chat_id, text):
     if uid not in users:
         return False
 
+    if text == "لغو":
+
+        del users[uid]
+
+        send_message(
+            chat_id,
+            "❌ ثبت سفارش لغو شد.",
+            main_keyboard()
+        )
+
+        return True
+
     state = users[uid]
 
-    if state.get("step") == "name":
+    # نام
+    if state["step"] == "name":
 
         state["order"]["name"] = text
         state["step"] = "type"
@@ -232,7 +202,8 @@ def process_order(chat_id, text):
 
         return True
 
-    if state.get("step") == "type":
+    # نوع پروژه
+    if state["step"] == "type":
 
         state["order"]["type"] = text
         state["step"] = "description"
@@ -241,12 +212,13 @@ def process_order(chat_id, text):
             chat_id,
             "✅ نوع پروژه دریافت شد.\n\n"
             "مرحله ۳ از ۴\n\n"
-            "📝 توضیحات کامل پروژه را ارسال کنید."
+            "📝 توضیحات پروژه را ارسال کنید."
         )
 
         return True
 
-    if state.get("step") == "description":
+    # توضیحات
+    if state["step"] == "description":
 
         state["order"]["description"] = text
         state["step"] = "budget"
@@ -255,52 +227,30 @@ def process_order(chat_id, text):
             chat_id,
             "✅ توضیحات دریافت شد.\n\n"
             "مرحله ۴ از ۴\n\n"
-            "💰 بودجه تقریبی پروژه را بنویسید."
+            "💰 بودجه تقریبی پروژه را ارسال کنید."
         )
 
         return True
 
-    if state.get("step") == "budget":
+    # بودجه
+    if state["step"] == "budget":
 
-        order_id = new_order_id()
+        state["order"]["budget"] = text
 
         order = state["order"]
 
-        order["budget"] = text
-        order["order_id"] = order_id
-        order["chat_id"] = chat_id
-        order["status"] = "جدید"
-
-        orders[order_id] = order.copy()
-
         del users[uid]
 
-        # پیام مشتری
         send_message(
             chat_id,
-            f"✅ سفارش شما ثبت شد!\n\n"
-            f"🆔 کد سفارش: {order_id}\n"
-            f"📌 وضعیت: جدید\n\n"
-            "سفارش برای مدیریت ارسال شد. 👨‍💻"
-        )
-
-        # پیام ادمین
-        admin_text = (
-            "🔔 سفارش جدید Sepehr Studio\n\n"
-            f"🆔 کد سفارش: {order_id}\n\n"
+            "🎉 سفارش شما ثبت شد!\n\n"
             f"👤 نام: {order['name']}\n"
-            f"💻 نوع پروژه: {order['type']}\n\n"
-            f"📝 توضیحات:\n"
+            f"💻 نوع پروژه: {order['type']}\n"
+            f"💰 بودجه: {order['budget']}\n\n"
+            "📌 توضیحات:\n"
             f"{order['description']}\n\n"
-            f"💰 بودجه:\n"
-            f"{order['budget']}\n\n"
-            "📌 وضعیت: جدید"
-        )
-
-        send_message(
-            ADMIN_CHAT_ID,
-            admin_text,
-            admin_keyboard(order_id)
+            "به‌زودی سفارش شما بررسی می‌شود. 🚀",
+            main_keyboard()
         )
 
         return True
@@ -309,65 +259,7 @@ def process_order(chat_id, text):
 
 
 # =========================
-# ADMIN ACTIONS
-# =========================
-
-def admin_action(chat_id, command):
-
-    if str(chat_id) != str(ADMIN_CHAT_ID):
-        return False
-
-    parts = command.split("_", 1)
-
-    if len(parts) != 2:
-        return False
-
-    action = parts[0]
-    order_id = parts[1]
-
-    if order_id not in orders:
-        send_message(
-            chat_id,
-            "❌ سفارش پیدا نشد."
-        )
-        return True
-
-    order = orders[order_id]
-
-    status_map = {
-        "accept": "تأیید شده",
-        "reject": "رد شده",
-        "working": "در حال انجام",
-        "done": "تکمیل شده"
-    }
-
-    if action not in status_map:
-        return False
-
-    new_status = status_map[action]
-
-    order["status"] = new_status
-
-    # اطلاع به ادمین
-    send_message(
-        chat_id,
-        f"✅ وضعیت سفارش {order_id} تغییر کرد.\n\n"
-        f"📌 وضعیت جدید: {new_status}"
-    )
-
-    # اطلاع به مشتری
-    send_message(
-        order["chat_id"],
-        f"📦 بروزرسانی سفارش شما\n\n"
-        f"🆔 کد سفارش: {order_id}\n"
-        f"📌 وضعیت: {new_status}"
-    )
-
-    return True
-
-
-# =========================
-# UPDATE HANDLER
+# UPDATE
 # =========================
 
 def process_update(update):
@@ -384,9 +276,11 @@ def process_update(update):
     if not isinstance(message, dict):
         return
 
-    text = (message.get("text") or "").strip()
+    text = message.get("text") or ""
+    text = text.strip()
 
     aux_data = message.get("aux_data") or {}
+
     button_id = aux_data.get("button_id")
 
     command = button_id or text
@@ -398,25 +292,10 @@ def process_update(update):
         flush=True
     )
 
-    # ادمین
-    if command.startswith(
-        ("accept_", "reject_", "working_", "done_")
-    ):
-
-        admin_action(
-            chat_id,
-            command
-        )
-
-        return
-
-    # اگر کاربر در حال ثبت سفارش است
+    # در حال ثبت سفارش
     if str(chat_id) in users:
 
-        if process_order(
-            chat_id,
-            text
-        ):
+        if process_order(chat_id, text):
             return
 
     # شروع
@@ -468,7 +347,7 @@ def process_update(update):
         send_message(
             chat_id,
             "🤖 پروژه‌های هوش مصنوعی\n\n"
-            "طراحی و توسعه پروژه‌های مبتنی بر هوش مصنوعی.",
+            "طراحی پروژه‌های مبتنی بر هوش مصنوعی.",
             main_keyboard()
         )
 
@@ -504,6 +383,14 @@ def process_update(update):
         send_message(
             chat_id,
             "🏠 منوی اصلی:",
+            main_keyboard()
+        )
+
+    elif command == "/test":
+
+        send_message(
+            chat_id,
+            "✅ بات Sepehr Studio فعال است!",
             main_keyboard()
         )
 
