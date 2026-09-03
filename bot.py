@@ -2,10 +2,6 @@ import os
 import time
 import requests
 
-# =========================
-# CONFIG
-# =========================
-
 TOKEN = os.getenv("RUBIKA_BOT_TOKEN")
 
 if not TOKEN:
@@ -13,51 +9,32 @@ if not TOKEN:
 
 API = f"https://botapi.rubika.ir/v3/{TOKEN}"
 
-# Chat ID ادمین
-ADMIN_CHAT_ID = "b0IGuhX0BBcQ085f392a2b3fce01be44"
-
 session = requests.Session()
-
-users = {}
-processed_updates = set()
 
 
 # =========================
 # API
 # =========================
 
-def call_api(method, payload=None):
+def api(method, data=None):
     try:
-        response = session.post(
+        r = session.post(
             f"{API}/{method}",
-            json=payload or {},
+            json=data or {},
             timeout=30
         )
 
+        result = r.json()
+
         print(
-            f"[API] {method} -> HTTP {response.status_code}",
+            f"[API] {method}: HTTP {r.status_code} -> {result}",
             flush=True
         )
-
-        try:
-            result = response.json()
-        except Exception:
-            print("[API ERROR] Invalid JSON", flush=True)
-            return {}
-
-        if result.get("status") != "OK":
-            print(
-                f"[API ERROR] {result}",
-                flush=True
-            )
 
         return result
 
-    except Exception as error:
-        print(
-            f"[NETWORK ERROR] {error}",
-            flush=True
-        )
+    except Exception as e:
+        print(f"[API ERROR] {e}", flush=True)
         return {}
 
 
@@ -65,462 +42,148 @@ def call_api(method, payload=None):
 # KEYBOARD
 # =========================
 
-def btn(button_id, text):
+def button(button_id, text):
     return {
-        "id": str(button_id),
+        "id": button_id,
         "type": "Simple",
-        "button_text": str(text)
-    }
-
-
-def make_keyboard(rows):
-    return {
-        "rows": [
-            {
-                "buttons": row
-            }
-            for row in rows
-        ]
+        "button_text": text
     }
 
 
 def main_keyboard():
-    return make_keyboard([
-        [
-            btn("services", "💻 خدمات Sepehr Studio")
-        ],
-        [
-            btn("order", "📋 ثبت سفارش"),
-            btn("contact", "👨‍💻 ارتباط با ما")
-        ],
-        [
-            btn("about", "ℹ️ درباره ما")
+    return {
+        "rows": [
+            {
+                "buttons": [
+                    button("services", "💻 خدمات Sepehr Studio")
+                ]
+            },
+            {
+                "buttons": [
+                    button("order", "📋 ثبت سفارش"),
+                    button("contact", "👨‍💻 ارتباط با ما")
+                ]
+            },
+            {
+                "buttons": [
+                    button("about", "ℹ️ درباره ما")
+                ]
+            }
         ]
-    ])
+    }
 
 
 def services_keyboard():
-    return make_keyboard([
-        [
-            btn("website", "🌐 طراحی سایت"),
-            btn("app", "📱 ساخت اپ")
-        ],
-        [
-            btn("ai", "🤖 هوش مصنوعی"),
-            btn("coding", "💻 برنامه‌نویسی")
-        ],
-        [
-            btn("back", "🔙 بازگشت")
+    return {
+        "rows": [
+            {
+                "buttons": [
+                    button("website", "🌐 طراحی سایت"),
+                    button("app", "📱 ساخت اپ")
+                ]
+            },
+            {
+                "buttons": [
+                    button("ai", "🤖 هوش مصنوعی"),
+                    button("coding", "💻 برنامه‌نویسی")
+                ]
+            },
+            {
+                "buttons": [
+                    button("back", "🔙 بازگشت")
+                ]
+            }
         ]
-    ])
+    }
 
 
 # =========================
-# SEND MESSAGE
+# SEND
 # =========================
 
-def send_message(chat_id, text, keypad=None):
+def send(chat_id, text, keyboard=None):
 
     payload = {
         "chat_id": str(chat_id),
-        "text": str(text)
+        "text": text
     }
 
-    if keypad is not None:
-        payload["inline_keypad"] = keypad
+    if keyboard is not None:
+        payload["inline_keypad"] = keyboard
 
-    return call_api(
-        "sendMessage",
-        payload
-    )
+    return api("sendMessage", payload)
 
 
 # =========================
-# ADMIN ORDER
+# UPDATE PARSER
 # =========================
 
-def send_order_to_admin(order, customer_chat_id):
-
-    admin_text = (
-        "🔔 سفارش جدید Sepehr Studio\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 نام مشتری:\n{order['name']}\n\n"
-        f"💻 نوع پروژه:\n{order['type']}\n\n"
-        f"📝 توضیحات:\n{order['description']}\n\n"
-        f"💰 بودجه:\n{order['budget']}\n\n"
-        f"🆔 Chat ID مشتری:\n{customer_chat_id}\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📌 وضعیت: سفارش جدید"
-    )
-
-    result = send_message(
-        ADMIN_CHAT_ID,
-        admin_text
-    )
-
-    print(
-        f"[ADMIN] Order sent -> {result}",
-        flush=True
-    )
-
-
-# =========================
-# ORDER SYSTEM
-# =========================
-
-def start_order(chat_id):
-
-    users[str(chat_id)] = {
-        "step": "name",
-        "order": {}
-    }
-
-    send_message(
-        chat_id,
-        "📋 ثبت سفارش جدید\n\n"
-        "مرحله ۱ از ۴\n\n"
-        "👤 نام خود را ارسال کنید.\n\n"
-        "برای لغو بنویسید: لغو"
-    )
-
-
-def process_order(chat_id, text):
-
-    uid = str(chat_id)
-
-    if uid not in users:
-        return False
-
-    if text == "لغو":
-
-        del users[uid]
-
-        send_message(
-            chat_id,
-            "❌ ثبت سفارش لغو شد.",
-            main_keyboard()
-        )
-
-        return True
-
-    state = users[uid]
-
-    # مرحله ۱
-    if state["step"] == "name":
-
-        state["order"]["name"] = text
-        state["step"] = "type"
-
-        send_message(
-            chat_id,
-            "✅ نام دریافت شد.\n\n"
-            "مرحله ۲ از ۴\n\n"
-            "💻 نوع پروژه را ارسال کنید.\n\n"
-            "مثلاً:\n"
-            "طراحی سایت\n"
-            "ساخت اپ\n"
-            "هوش مصنوعی\n"
-            "برنامه‌نویسی"
-        )
-
-        return True
-
-    # مرحله ۲
-    if state["step"] == "type":
-
-        state["order"]["type"] = text
-        state["step"] = "description"
-
-        send_message(
-            chat_id,
-            "✅ نوع پروژه دریافت شد.\n\n"
-            "مرحله ۳ از ۴\n\n"
-            "📝 توضیحات کامل پروژه را ارسال کنید."
-        )
-
-        return True
-
-    # مرحله ۳
-    if state["step"] == "description":
-
-        state["order"]["description"] = text
-        state["step"] = "budget"
-
-        send_message(
-            chat_id,
-            "✅ توضیحات دریافت شد.\n\n"
-            "مرحله ۴ از ۴\n\n"
-            "💰 بودجه تقریبی پروژه را ارسال کنید."
-        )
-
-        return True
-
-    # مرحله ۴
-    if state["step"] == "budget":
-
-        state["order"]["budget"] = text
-
-        order = state["order"].copy()
-
-        del users[uid]
-
-        # ارسال برای مشتری
-        send_message(
-            chat_id,
-            "🎉 سفارش شما با موفقیت ثبت شد!\n\n"
-            f"👤 نام: {order['name']}\n"
-            f"💻 پروژه: {order['type']}\n"
-            f"💰 بودجه: {order['budget']}\n\n"
-            f"📝 توضیحات:\n{order['description']}\n\n"
-            "🚀 سفارش برای Sepehr Studio ارسال شد.",
-            main_keyboard()
-        )
-
-        # ارسال برای ادمین
-        send_order_to_admin(
-            order,
-            chat_id
-        )
-
-        return True
-
-    return False
-
-
-# =========================
-# UPDATE
-# =========================
-
-def process_update(update):
+def handle_update(update):
 
     if not isinstance(update, dict):
         return
 
+    print(
+        "[RAW UPDATE]",
+        update,
+        flush=True
+    )
+
+    # ساختار اصلی getUpdates
     chat_id = update.get("chat_id")
 
     message = update.get("new_message")
 
+    # بعضی ساختارها ممکن است message داشته باشند
     if not isinstance(message, dict):
         message = update.get("message")
 
     if not isinstance(message, dict):
         message = {}
 
+    # اگر chat_id داخل message بود
     if not chat_id:
         chat_id = message.get("chat_id")
 
     if not chat_id:
+        print("[WARNING] chat_id not found", flush=True)
         return
 
-    message_id = (
-        message.get("message_id")
-        or update.get("update_id")
-    )
-
-    if message_id:
-
-        message_id = str(message_id)
-
-        if message_id in processed_updates:
-            return
-
-        processed_updates.add(message_id)
-
-        if len(processed_updates) > 2000:
-            processed_updates.clear()
-
     text = str(
-        message.get("text")
-        or update.get("text")
-        or ""
+        message.get("text") or ""
     ).strip()
 
     # =========================
-    # BUTTON ID
+    # BUTTON
     # =========================
+
+    aux = message.get("aux_data")
 
     button_id = None
 
-    aux_data = message.get("aux_data")
-
-    if isinstance(aux_data, dict):
-
-        button_id = (
-            aux_data.get("button_id")
-            or aux_data.get("buttonId")
-            or aux_data.get("id")
-        )
-
-    if not button_id:
-
-        aux_data = update.get("aux_data")
-
-        if isinstance(aux_data, dict):
-
-            button_id = (
-                aux_data.get("button_id")
-                or aux_data.get("buttonId")
-                or aux_data.get("id")
-            )
+    if isinstance(aux, dict):
+        button_id = aux.get("button_id")
 
     if button_id:
         button_id = str(button_id)
 
     print(
-        f"[MESSAGE] chat={chat_id} "
+        f"[EVENT] chat={chat_id} "
         f"text={text!r} "
-        f"button={button_id!r}",
+        f"button_id={button_id!r}",
         flush=True
     )
 
-    # =========================
-    # ADMIN COMMAND
-    # =========================
-
-    if (
-        text.lower() in
-        ["/admin", "admin", "ادمین", "مدیریت"]
-    ):
-
-        if str(chat_id) == ADMIN_CHAT_ID:
-
-            send_message(
-                chat_id,
-                "👑 پنل مدیریت Sepehr Studio\n\n"
-                "🟢 وضعیت بات: فعال\n"
-                "📋 سیستم سفارش: فعال\n"
-                "📨 ارسال سفارش به ادمین: فعال\n\n"
-                f"🆔 Admin Chat ID:\n{ADMIN_CHAT_ID}"
-            )
-
-        else:
-
-            send_message(
-                chat_id,
-                "⛔ شما دسترسی ادمین ندارید."
-            )
-
-        return
-
-    # =========================
-    # ORDER
-    # =========================
-
-    if str(chat_id) in users:
-
-        if process_order(chat_id, text):
-            return
-
-    # =========================
-    # BUTTONS
-    # =========================
-
+    # دکمه یا متن
     command = button_id or text
-
-    if command == "services":
-
-        send_message(
-            chat_id,
-            "💻 خدمات Sepehr Studio:",
-            services_keyboard()
-        )
-
-        return
-
-    if command == "order":
-
-        start_order(chat_id)
-
-        return
-
-    if command == "contact":
-
-        send_message(
-            chat_id,
-            "👨‍💻 ارتباط با Sepehr Studio\n\n"
-            "پیام خود را ارسال کنید.",
-            main_keyboard()
-        )
-
-        return
-
-    if command == "about":
-
-        send_message(
-            chat_id,
-            "🚀 Sepehr Studio\n\n"
-            "طراحی سایت، برنامه‌نویسی، "
-            "اپلیکیشن و هوش مصنوعی.",
-            main_keyboard()
-        )
-
-        return
-
-    if command == "website":
-
-        send_message(
-            chat_id,
-            "🌐 طراحی سایت\n\n"
-            "طراحی سایت‌های مدرن و واکنش‌گرا.",
-            services_keyboard()
-        )
-
-        return
-
-    if command == "app":
-
-        send_message(
-            chat_id,
-            "📱 ساخت اپلیکیشن\n\n"
-            "ساخت اپلیکیشن و رابط کاربری.",
-            services_keyboard()
-        )
-
-        return
-
-    if command == "ai":
-
-        send_message(
-            chat_id,
-            "🤖 پروژه‌های هوش مصنوعی\n\n"
-            "طراحی پروژه‌های مبتنی بر هوش مصنوعی.",
-            services_keyboard()
-        )
-
-        return
-
-    if command == "coding":
-
-        send_message(
-            chat_id,
-            "💻 برنامه‌نویسی\n\n"
-            "توسعه پروژه‌های وب و نرم‌افزاری.",
-            services_keyboard()
-        )
-
-        return
-
-    if command == "back":
-
-        send_message(
-            chat_id,
-            "🏠 منوی اصلی:",
-            main_keyboard()
-        )
-
-        return
 
     # =========================
     # START
     # =========================
 
-    if text in [
-        "/start",
-        "start",
-        "شروع"
-    ]:
+    if command in ["/start", "start", "شروع"]:
 
-        send_message(
+        send(
             chat_id,
             "🚀 به Sepehr Studio خوش آمدید!\n\n"
             "یکی از گزینه‌های زیر را انتخاب کنید:",
@@ -530,14 +193,133 @@ def process_update(update):
         return
 
     # =========================
-    # TEST
+    # SERVICES
     # =========================
 
-    if text == "/test":
+    if command == "services":
 
-        send_message(
+        send(
             chat_id,
-            "✅ Sepehr Studio Bot فعال است!",
+            "💻 خدمات Sepehr Studio:",
+            services_keyboard()
+        )
+
+        return
+
+    # =========================
+    # WEBSITE
+    # =========================
+
+    if command == "website":
+
+        send(
+            chat_id,
+            "🌐 طراحی سایت\n\n"
+            "طراحی سایت‌های مدرن و واکنش‌گرا.",
+            services_keyboard()
+        )
+
+        return
+
+    # =========================
+    # APP
+    # =========================
+
+    if command == "app":
+
+        send(
+            chat_id,
+            "📱 ساخت اپلیکیشن\n\n"
+            "ساخت اپلیکیشن و رابط کاربری.",
+            services_keyboard()
+        )
+
+        return
+
+    # =========================
+    # AI
+    # =========================
+
+    if command == "ai":
+
+        send(
+            chat_id,
+            "🤖 پروژه‌های هوش مصنوعی\n\n"
+            "طراحی پروژه‌های مبتنی بر هوش مصنوعی.",
+            services_keyboard()
+        )
+
+        return
+
+    # =========================
+    # CODING
+    # =========================
+
+    if command == "coding":
+
+        send(
+            chat_id,
+            "💻 برنامه‌نویسی\n\n"
+            "توسعه پروژه‌های وب و نرم‌افزاری.",
+            services_keyboard()
+        )
+
+        return
+
+    # =========================
+    # ORDER
+    # =========================
+
+    if command == "order":
+
+        send(
+            chat_id,
+            "📋 ثبت سفارش\n\n"
+            "برای ثبت سفارش، اطلاعات پروژه را برای من ارسال کنید.",
+            main_keyboard()
+        )
+
+        return
+
+    # =========================
+    # CONTACT
+    # =========================
+
+    if command == "contact":
+
+        send(
+            chat_id,
+            "👨‍💻 ارتباط با Sepehr Studio\n\n"
+            "پیام خود را ارسال کنید.",
+            main_keyboard()
+        )
+
+        return
+
+    # =========================
+    # ABOUT
+    # =========================
+
+    if command == "about":
+
+        send(
+            chat_id,
+            "🚀 Sepehr Studio\n\n"
+            "طراحی سایت، برنامه‌نویسی، اپلیکیشن و هوش مصنوعی.",
+            main_keyboard()
+        )
+
+        return
+
+    # =========================
+    # BACK
+    # =========================
+
+    if command == "back":
+
+        send(
+            chat_id,
+            "🏠 منوی اصلی:",
             main_keyboard()
         )
 
@@ -561,27 +343,27 @@ def run():
 
         try:
 
-            payload = {
+            data = {
                 "limit": 10
             }
 
             if offset_id:
-                payload["offset_id"] = offset_id
+                data["offset_id"] = offset_id
 
-            result = call_api(
+            result = api(
                 "getUpdates",
-                payload
+                data
             )
 
-            data = result.get(
+            updates_data = result.get(
                 "data",
                 {}
             )
 
-            if not isinstance(data, dict):
-                data = {}
+            if not isinstance(updates_data, dict):
+                updates_data = {}
 
-            updates = data.get(
+            updates = updates_data.get(
                 "updates",
                 []
             )
@@ -590,42 +372,39 @@ def run():
                 updates = []
 
             print(
-                f"[UPDATES] {len(updates)} update(s)",
+                f"🔄 Updates received: {len(updates)}",
                 flush=True
             )
 
             for update in updates:
 
                 try:
-                    process_update(update)
+                    handle_update(update)
 
-                except Exception as error:
+                except Exception as e:
 
                     print(
-                        f"[UPDATE ERROR] {error}",
+                        f"[UPDATE ERROR] {e}",
                         flush=True
                     )
 
-            next_offset = data.get(
+            # مهم: offset بعد از پردازش Updateها
+            next_offset = updates_data.get(
                 "next_offset_id"
             )
 
             if next_offset:
                 offset_id = str(next_offset)
 
-        except Exception as error:
+        except Exception as e:
 
             print(
-                f"[BOT ERROR] {error}",
+                f"[LOOP ERROR] {e}",
                 flush=True
             )
 
         time.sleep(2)
 
-
-# =========================
-# START
-# =========================
 
 if __name__ == "__main__":
     run()
